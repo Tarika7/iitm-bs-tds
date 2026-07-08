@@ -1,18 +1,23 @@
 import time
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
-# Enable explicit global CORS handling so browser tests pass smoothly
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Strict and complete CORS implementation to prevent browser 'Failed to fetch' errors
+@app.middleware("http")
+async def cors_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        response = Response(status_code=200)
+    else:
+        response = await call_next(request)
+        
+    origin = request.headers.get("origin", "*")
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Idempotency-Key, X-Client-Id"
+    return response
 
 TOTAL_ORDERS = 49
 RATE_LIMIT_CEILING = 15
@@ -25,7 +30,7 @@ rate_buckets = {}
 ORDER_CATALOG = [{"id": i, "item": f"Item Descriptor #{i}", "price": 10.0 * i} for i in range(1, TOTAL_ORDERS + 1)]
 
 @app.post("/orders", status_code=201)
-async def create_order(idempotency_key: str = Header(None)):
+async def create_order(request: Request, idempotency_key: str = Header(None)):
     if not idempotency_key:
         raise HTTPException(status_code=400, detail="Missing Idempotency-Key")
     
@@ -51,7 +56,6 @@ async def get_orders(
     rate_buckets[client] = [t for t in rate_buckets[client] if now - t < WINDOW]
     
     if len(rate_buckets[client]) >= RATE_LIMIT_CEILING:
-        # FIXED: Using explicit JSONResponse to force inclusion of the Retry-After header
         return JSONResponse(
             status_code=429,
             content={"detail": "Too Many Requests"},
