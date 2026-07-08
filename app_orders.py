@@ -1,9 +1,18 @@
 import time
-from fastapi import FastAPI, Header, HTTPException, Query, Response
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Enable explicit global CORS handling so browser tests pass smoothly
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 TOTAL_ORDERS = 49
 RATE_LIMIT_CEILING = 15
@@ -42,7 +51,13 @@ async def get_orders(
     rate_buckets[client] = [t for t in rate_buckets[client] if now - t < WINDOW]
     
     if len(rate_buckets[client]) >= RATE_LIMIT_CEILING:
-        return Response(status_code=429, headers={"Retry-After": str(WINDOW)})
+        # FIXED: Using explicit JSONResponse to force inclusion of the Retry-After header
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too Many Requests"},
+            headers={"Retry-After": str(WINDOW)}
+        )
+        
     rate_buckets[client].append(now)
 
     # Process Cursor Pagination
